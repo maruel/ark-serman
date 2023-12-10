@@ -228,7 +228,11 @@ func main() {
 	bind := flag.String("p", ":8070", "bind address and port")
 	pwd := flag.String("pwd", "", "rcon password")
 	quiet := flag.Bool("q", false, "don't print log lines")
-
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		os.Stderr.WriteString("\nSee rcon commands at https://ark.fandom.com/wiki/Console_commands\n")
+	}
 	log.SetFlags(log.Lmicroseconds)
 	flag.Parse()
 

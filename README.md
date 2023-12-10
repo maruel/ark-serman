@@ -23,3 +23,7 @@ cd ark-serman
 See https://developer.valvesoftware.com/wiki/SteamCMD for more information.
 
 All the data ends up in `~/.local/share/Steam` and `~/.steam`.
+
+Start the game more quickly on Windows by creating a shortcut with:
+
+`"C:\Program Files (x86)\Steam\steam.exe" -applaunch 346110 +connect <ip>:<queryport> +password <PASSWORD>`
