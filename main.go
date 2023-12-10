@@ -12,8 +12,10 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"sort"
 	"text/template"
@@ -99,7 +101,11 @@ func getUnitStates(ctx context.Context) ([]unitStatus, error) {
 	}
 	unitNames := make([]string, 0, len(unitFiles))
 	for _, v := range unitFiles {
-		unitNames = append(unitNames, path.Base(v.Path))
+		b := path.Base(v.Path)
+		if b == "ark-serman.service" {
+			continue
+		}
+		unitNames = append(unitNames, b)
 	}
 	unitStates, err := conn.ListUnitsByNamesContext(ctx, unitNames)
 	if err != nil {
@@ -180,6 +186,44 @@ func rpcStop(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+func runRcon(ctx context.Context, host, pwd string, cmds []string) {
+	// Doesn't support context at the moment.
+	conn, err := rcon.Dial(host, pwd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	for _, a := range cmds {
+		fmt.Printf("Running: %s\n", a)
+		resp, err := conn.Execute(a)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("  Got: %s\n", resp)
+	}
+}
+
+func runServer(ctx context.Context, bind string, quiet bool) {
+	mux := &http.ServeMux{}
+	mux.Handle("/rpc/start/", http.HandlerFunc(rpcStart))
+	mux.Handle("/rpc/stop/", http.HandlerFunc(rpcStop))
+	mux.Handle("/", http.HandlerFunc(serveRoot))
+	var h http.Handler = mux
+	if !quiet {
+		h = &loghttp.Handler{Handler: mux}
+	}
+	s := &http.Server{
+		Addr:           bind,
+		Handler:        h,
+		ReadTimeout:    10. * time.Second,
+		WriteTimeout:   60 * time.Second,
+		MaxHeaderBytes: http.DefaultMaxHeaderBytes,
+		BaseContext:    func(net.Listener) context.Context { return ctx },
+	}
+	log.Printf("Serving on %s", bind)
+	log.Fatal(s.ListenAndServe())
+}
+
 func main() {
 	bind := flag.String("p", ":8070", "bind address and port")
 	pwd := flag.String("pwd", "", "rcon password")
@@ -188,45 +232,19 @@ func main() {
 	log.SetFlags(log.Lmicroseconds)
 	flag.Parse()
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
 	if flag.NArg() != 0 {
 		if *pwd == "" {
 			println("-pwd is required")
 			os.Exit(1)
 		}
-		conn, err := rcon.Dial(*bind, *pwd)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer conn.Close()
-		for _, a := range flag.Args() {
-			fmt.Printf("Running: %s\n", a)
-			resp, err := conn.Execute(a)
-			if err != nil {
-				log.Fatal(err)
-			}
-			fmt.Printf("  Got: %s\n", resp)
-		}
+		runRcon(ctx, *bind, *pwd, flag.Args())
 		return
 	} else if *pwd != "" {
 		println("-pwd is unexpected")
 		os.Exit(1)
 	}
-
-	mux := &http.ServeMux{}
-	mux.Handle("/rpc/start/", http.HandlerFunc(rpcStart))
-	mux.Handle("/rpc/stop/", http.HandlerFunc(rpcStop))
-	mux.Handle("/", http.HandlerFunc(serveRoot))
-	var h http.Handler = mux
-	if !*quiet {
-		h = &loghttp.Handler{Handler: mux}
-	}
-	s := &http.Server{
-		Addr:           *bind,
-		Handler:        h,
-		ReadTimeout:    10. * time.Second,
-		WriteTimeout:   60 * time.Second,
-		MaxHeaderBytes: http.DefaultMaxHeaderBytes,
-	}
-	log.Printf("Serving on %s", *bind)
-	log.Fatal(s.ListenAndServe())
+	runServer(ctx, *bind, *quiet)
 }
