@@ -35,8 +35,12 @@ thead {
 tr :nth-child(4), tr :nth-child(5) {
   text-align: right;
 }
+h1 {
+	margin-bottom: 0;
+}
 </style>
-<h1>ark-serman: an Ark Dedicated Server Manager</h1>
+<h1>ark-serman</h1>
+Ark Dedicated Server Manager
 <p>
 <table>
 <thead>
