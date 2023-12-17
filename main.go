@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"fmt"
 	"io"
@@ -26,53 +27,10 @@ import (
 	"github.com/maruel/serve-dir/loghttp"
 )
 
-const page = `<!DOCTYPE html>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-thead {
-	background-color: lightgray;
-}
-tr :nth-child(4), tr :nth-child(5) {
-  text-align: right;
-}
-h1 {
-	margin-bottom: 0;
-}
-</style>
-<h1>ark-serman</h1>
-Ark Dedicated Server Manager
-<p>
-<table>
-<thead>
-<tr>
-<th>Map</th>
-<th>State</th>
-<th>Command</th>
-<th>Memory</th>
-<th>CPU</th>
-</tr>
-</thead>
-{{range .Servers}}
-<tr>
-<td>{{.DisplayName}}</td>
-{{if .Running}}
-<td><strong>{{.ActiveState}}</strong></td>
-<td><form action="/rpc/stop/{{.Name}}" method="POST"><input type="submit" value="Stop"></form></td>
-{{/* <td>{{range $k, $v := .Props}}{{$k}}: {{$v}}<br>{{end}}</td> */}}
-<td>{{.CPU}} s</td>
-<td>{{.Memory}} MiB</td>
-{{else}}
-<td>{{.ActiveState}}</td>
-<td><form action="/rpc/start/{{.Name}}" method="POST"><input type="submit" value="Start"></form></td>
-<td>N/A</td>
-<td>N/A</td>
-{{end}}
-</tr>
-{{end}}
-</table>
-`
+//go:embed rsc/*.html.tmpl
+var rsc embed.FS
 
-var pageTmpl = template.Must(template.New("").Parse(page))
+var pageTmpl = template.Must(template.ParseFS(rsc, "rsc/root.html.tmpl"))
 
 func replyError(w http.ResponseWriter, s string) {
 	w.Header().Add("Content-Type", "text/plain")
