@@ -123,7 +123,7 @@ func (r *rconRun) Run(a subcommands.Application, args []string, env subcommands.
 		}
 		fmt.Printf("  Got: %s\n", resp)
 	}
-	return 1
+	return 0
 }
 
 //
