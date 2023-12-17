@@ -18,7 +18,7 @@ Wants=network-online.target
 After=syslog.target network.target nss-lookup.target network-online.target
 
 [Service]
-ExecStart=%h/go/bin/ark-serman
+ExecStart=%h/go/bin/ark-serman web
 ExecStop=/bin/kill -s INT \$MAINPID
 
 [Install]

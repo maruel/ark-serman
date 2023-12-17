@@ -8,9 +8,9 @@ package main
 import (
 	"context"
 	"embed"
-	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"net"
@@ -25,10 +25,121 @@ import (
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/gorcon/rcon"
 	"github.com/maruel/serve-dir/loghttp"
+	"github.com/maruel/subcommands"
 )
 
-//go:embed rsc/*.html.tmpl
+//go:embed rsc/*.html.tmpl rsc/static/*
 var rsc embed.FS
+
+var application = &subcommands.DefaultApplication{
+	Name:  "ark-serman",
+	Title: "Ark Dedicated Server Manager.",
+	Commands: []*subcommands.Command{
+		cmdInstall,
+		cmdRCon,
+		cmdWeb,
+		subcommands.CmdHelp,
+	},
+}
+
+type args struct {
+	subcommands.CommandRunBase
+	quiet bool
+}
+
+func (a *args) flags() {
+	a.Flags.BoolVar(&a.quiet, "q", false, "don't print log lines")
+}
+
+//
+
+var cmdInstall = &subcommands.Command{
+	UsageLine: "install <options>",
+	ShortDesc: "Installs ark-serman and the Ark servers as a systemd service",
+	LongDesc:  "Installs ark-serman and the Ark servers as a systemd service.",
+	CommandRun: func() subcommands.CommandRun {
+		c := &installRun{}
+		c.args.flags()
+		c.Flags.StringVar(&c.userPwd, "u", "", "user password (optional)")
+		c.Flags.StringVar(&c.adminPwd, "a", "", "rcon (admin) password")
+		return c
+	},
+}
+
+type installRun struct {
+	args
+	userPwd  string
+	adminPwd string
+}
+
+func (i *installRun) Run(a subcommands.Application, args []string, env subcommands.Env) int {
+	if len(args) != 0 {
+		fmt.Fprintf(os.Stderr, "%s: Unsupported arguments.\n", a.GetName())
+		return 1
+	}
+	//ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	//defer cancel()
+	fmt.Fprintf(os.Stderr, "TODO(maruel): Implement me\n")
+	return 1
+}
+
+//
+
+var cmdRCon = &subcommands.Command{
+	UsageLine: "rcon <options> <commands>",
+	ShortDesc: "Connects to an Ark server via RCon (admin) port",
+	LongDesc:  "Connects to an Ark server via RCon (admin) port.",
+	CommandRun: func() subcommands.CommandRun {
+		c := &rconRun{}
+		c.args.flags()
+		c.Flags.StringVar(&c.host, "p", "", "rcon host:port")
+		c.Flags.StringVar(&c.adminPwd, "a", "", "rcon (admin) password")
+		return c
+	},
+}
+
+type rconRun struct {
+	args
+	host     string
+	adminPwd string
+}
+
+func (r *rconRun) Run(a subcommands.Application, args []string, env subcommands.Env) int {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "%s: At least one admin command required.\n", a.GetName())
+		return 1
+	}
+	// Doesn't support context at the moment.
+	conn, err := rcon.Dial(r.host, r.adminPwd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	for _, a := range args {
+		fmt.Printf("Running: %s\n", a)
+		resp, err := conn.Execute(a)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("  Got: %s\n", resp)
+	}
+	return 1
+}
+
+//
+
+var cmdWeb = &subcommands.Command{
+	UsageLine: "web <options>",
+	ShortDesc: "Runs the web server",
+	LongDesc:  "Runs the web server to manage the Ark servers.\nSee rcon commands at https://ark.fandom.com/wiki/Console_commands\n",
+	CommandRun: func() subcommands.CommandRun {
+		c := &webRun{}
+		c.args.flags()
+		c.Flags.StringVar(&c.bind, "p", ":8070", "bind address and port")
+		c.Flags.StringVar(&c.adminPwd, "pwd", "", "rcon (admin) password")
+		return c
+	},
+}
 
 var pageTmpl = template.Must(template.ParseFS(rsc, "rsc/root.html.tmpl"))
 
@@ -148,69 +259,47 @@ func rpcStop(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func runRcon(ctx context.Context, host, pwd string, cmds []string) {
-	// Doesn't support context at the moment.
-	conn, err := rcon.Dial(host, pwd)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-	for _, a := range cmds {
-		fmt.Printf("Running: %s\n", a)
-		resp, err := conn.Execute(a)
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Printf("  Got: %s\n", resp)
-	}
+type webRun struct {
+	args
+	bind     string
+	adminPwd string
 }
 
-func runServer(ctx context.Context, bind string, quiet bool) {
+func (w *webRun) Run(a subcommands.Application, args []string, env subcommands.Env) int {
+	if len(args) != 0 {
+		fmt.Fprintf(os.Stderr, "%s: Unsupported arguments.\n", a.GetName())
+		return 1
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
 	mux := &http.ServeMux{}
 	mux.Handle("/rpc/start/", http.HandlerFunc(rpcStart))
 	mux.Handle("/rpc/stop/", http.HandlerFunc(rpcStop))
+	static, err := fs.Sub(rsc, "rsc/static")
+	if err != nil {
+		panic(err)
+	}
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	mux.Handle("/favicon.ico", http.RedirectHandler("/static/ark.png", http.StatusSeeOther))
 	mux.Handle("/", http.HandlerFunc(serveRoot))
 	var h http.Handler = mux
-	if !quiet {
+	if !w.quiet {
 		h = &loghttp.Handler{Handler: mux}
 	}
 	s := &http.Server{
-		Addr:           bind,
+		Addr:           w.bind,
 		Handler:        h,
 		ReadTimeout:    10. * time.Second,
 		WriteTimeout:   60 * time.Second,
 		MaxHeaderBytes: http.DefaultMaxHeaderBytes,
 		BaseContext:    func(net.Listener) context.Context { return ctx },
 	}
-	log.Printf("Serving on %s", bind)
+	log.Printf("Serving on %s", w.bind)
 	log.Fatal(s.ListenAndServe())
+	return 0
 }
 
 func main() {
-	bind := flag.String("p", ":8070", "bind address and port")
-	pwd := flag.String("pwd", "", "rcon password")
-	quiet := flag.Bool("q", false, "don't print log lines")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
-		flag.PrintDefaults()
-		os.Stderr.WriteString("\nSee rcon commands at https://ark.fandom.com/wiki/Console_commands\n")
-	}
 	log.SetFlags(log.Lmicroseconds)
-	flag.Parse()
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
-	if flag.NArg() != 0 {
-		if *pwd == "" {
-			println("-pwd is required")
-			os.Exit(1)
-		}
-		runRcon(ctx, *bind, *pwd, flag.Args())
-		return
-	} else if *pwd != "" {
-		println("-pwd is unexpected")
-		os.Exit(1)
-	}
-	runServer(ctx, *bind, *quiet)
+	os.Exit(subcommands.Run(application, nil))
 }
